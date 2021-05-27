@@ -20,6 +20,7 @@ from absl import flags
 from absl import logging
 from collections import defaultdict
 import csv
+import dataclasses
 from fontTools import ttLib
 from fontTools.misc.arrayTools import rectArea, unionRect
 from fontTools.ttLib.tables import otTables as ot
@@ -229,7 +230,7 @@ def _next_name(ufo: ufoLib2.Font, name_fn) -> str:
     return name_fn(i)
 
 
-def _create_glyph(color_glyph: ColorGlyph, painted_layer: PaintedLayer) -> Glyph:
+def _create_glyph(color_glyph: ColorGlyph, paint: PaintGlyph) -> Glyph:
     ufo = color_glyph.ufo
 
     glyph = ufo.newGlyph(_next_name(ufo, lambda i: f"{color_glyph.glyph_name}.{i}"))
@@ -238,7 +239,7 @@ def _create_glyph(color_glyph: ColorGlyph, painted_layer: PaintedLayer) -> Glyph
 
     svg_units_to_font_units = color_glyph.transform_for_font_space()
 
-    if painted_layer.reuses:
+    if False:  # TODO restore reuse of shapes
         # Shape repeats, form a composite
         base_glyph = ufo.newGlyph(
             _next_name(ufo, lambda i: f"{glyph.name}.component.{i}")
@@ -268,7 +269,7 @@ def _create_glyph(color_glyph: ColorGlyph, painted_layer: PaintedLayer) -> Glyph
     else:
         # Not a composite, just draw directly on the glyph
         draw_svg_path(
-            SVGPath(d=painted_layer.path), glyph.getPen(), svg_units_to_font_units
+            SVGPath(d=paint.glyph), glyph.getPen(), svg_units_to_font_units
         )
 
     ufo.glyphOrder += glyph_names
@@ -298,9 +299,9 @@ def _draw_glyph_extents(
 
 def _glyf_ufo(ufo, color_glyphs):
     # glyphs by reuse_key
-    glyphs = {}
+    glyph_cache = {}
     reused = set()
-    for color_glyph in color_glyphs:
+    for i, color_glyph in enumerate(color_glyphs):
         logging.debug(
             "%s %s %s",
             ufo.info.familyName,
@@ -308,16 +309,17 @@ def _glyf_ufo(ufo, color_glyphs):
             color_glyph.transform_for_font_space(),
         )
         parent_glyph = ufo[color_glyph.glyph_name]
-        for painted_layer in color_glyph.painted_layers:
-            # if we've seen this shape before reuse it
-            reuse_key = painted_layer.shape_cache_key()
-            if reuse_key not in glyphs:
-                glyph = _create_glyph(color_glyph, painted_layer)
-                glyphs[reuse_key] = glyph
-            else:
-                glyph = glyphs[reuse_key]
-                reused.add(glyph.name)
-            parent_glyph.components.append(Component(baseGlyph=glyph.name))
+
+        # generate glyphs for PaintGlyph's and assign glyph names
+        color_glyphs[i] = color_glyph = _migrate_paths_to_ufo_glyphs(color_glyph, glyph_cache)
+
+        for root in color_glyph.painted_layers:
+            for paint in root.breadth_first():
+                # For 'glyf' just dump anything that isn't a PaintGlyph
+                if not isinstance(paint, PaintGlyph):
+                    continue
+                glyph = glyph_cache[paint.glyph]
+                parent_glyph.components.append(Component(baseGlyph=glyph.name))
 
     for color_glyph in color_glyphs:
         parent_glyph = ufo[color_glyph.glyph_name]
@@ -334,31 +336,48 @@ def _glyf_ufo(ufo, color_glyphs):
 
 
 def _colr_layer(
-    colr_version: int, layer_glyph_name: str, paint: Paint, palette: Sequence[Color]
+    colr_version: int, root: Paint, palette: Sequence[Color]
 ):
-    # For COLRv0, paint is just the palette index
+    # For COLRv0, we just name a glyph and paint it a color
     # For COLRv1, it's a data structure describing paint
     if colr_version == 0:
-        # COLRv0: draw using the first available color on the glyph_layer
-        # Results for gradients will be suboptimal :)
-        color = next(paint.colors())
-        return (layer_glyph_name, palette.index(color))
-
+        # COLRv0: find the first PaintGlyph we can and color it in the first color
+        # Results for complex structures will be suboptimal :)
+        for paint in root.breadth_first():
+            if isinstance(paint, PaintGlyph):
+                color = next(paint.colors())
+                return (paint.glyph, palette.index(color))
+        raise ValueError("No PaintGlyph available, cannot emit COLR v0")
     elif colr_version == 1:
-        # COLRv1: layer is graph of (solid, gradients, etc.) paints.
-        # Root node is always a PaintGlyph (format 4) for now.
-        # TODO Support more paints (PaintTransform, PaintColorGlyph, PaintComposite)
-        return PaintGlyph(layer_glyph_name, paint).to_ufo_paint(palette)
+        return root.to_ufo_paint(palette)
 
     else:
         raise ValueError(f"Unsupported COLR version: {colr_version}")
 
 
-def _inter_glyph_reuse_key(painted_layer: PaintedLayer) -> PaintedLayer:
+def _inter_glyph_reuse_key(paint: PaintGlyph) -> PaintGlyph:
     """Individual glyf entries, including composites, can be reused.
 
     COLR lets us reuse the shape regardless of paint so paint is not part of key."""
-    return painted_layer._replace(paint=PaintSolid())
+    return dataclasses.replace(paint, paint=PaintSolid())
+
+
+def _migrate_paths_to_ufo_glyphs(color_glyph, glyph_cache) -> ColorGlyph:
+    # Walk through the color glyph, where we see a PaintGlyph take the path out of it,
+    # generate a ufo glyph, and push the name of the ufo glyph into the PaintGlyph
+    def _update_paint_glyph(paint):
+        if not isinstance(paint, PaintGlyph):
+            return {}
+        glyph_cache_key = _inter_glyph_reuse_key(paint)  # TODO full shape reuse
+        if glyph_cache_key not in glyph_cache:
+            glyph = _create_glyph(color_glyph, paint)
+            glyph_cache[glyph_cache_key] = glyph
+            glyph_cache[glyph.name] = glyph
+        else:
+            glyph = glyph_cache[glyph_cache_key]
+        return {"glyph": glyph.name}
+
+    return color_glyph.mutating_traverse(_update_paint_glyph)
 
 
 def _ufo_colr_layers_and_bounds(colr_version, colors, color_glyph, glyph_cache):
@@ -367,26 +386,22 @@ def _ufo_colr_layers_and_bounds(colr_version, colors, color_glyph, glyph_cache):
     colr_layers = []
 
     bounds = None
-    # accumulate layers in z-order
-    for painted_layer in color_glyph.painted_layers:
-        # if we've seen this shape before reuse it
-        glyph_cache_key = _inter_glyph_reuse_key(painted_layer)
-        if glyph_cache_key not in glyph_cache:
-            glyph = _create_glyph(color_glyph, painted_layer)
-            glyph_cache[glyph_cache_key] = glyph
-        else:
-            glyph = glyph_cache[glyph_cache_key]
-
+    def _update_bounds(paint):
+        if not isinstance(paint, PaintGlyph):
+            return
+        glyph = color_glyph.ufo.get(paint.glyph)
         glyph_bbox = glyph.getControlBounds(color_glyph.ufo)
         if glyph_bbox is not None:
+            nonlocal bounds
             if bounds is None:
                 bounds = glyph_bbox
             else:
                 bounds = unionRect(bounds, glyph_bbox)
+    color_glyph.traverse(_update_bounds)
 
-        layer = _colr_layer(colr_version, glyph.name, painted_layer.paint, colors)
-
-        colr_layers.append(layer)
+    # accumulate layers in z-order
+    for paint in color_glyph.painted_layers:
+        colr_layers.append(_colr_layer(colr_version, paint, colors))
 
     if colr_version > 0:
         colr_layers = {
@@ -418,8 +433,7 @@ def _colr_ufo(colr_version, ufo, color_glyphs):
     # potentially reusable glyphs
     glyph_cache = {}
 
-    # write out the glyphs
-    for color_glyph in color_glyphs:
+    for i, color_glyph in enumerate(color_glyphs):
         logging.debug(
             "%s %s %s",
             ufo.info.familyName,
@@ -427,6 +441,10 @@ def _colr_ufo(colr_version, ufo, color_glyphs):
             color_glyph.transform_for_font_space(),
         )
 
+        # generate glyphs for PaintGlyph's and assign glyph names
+        color_glyphs[i] = color_glyph = _migrate_paths_to_ufo_glyphs(color_glyph, glyph_cache)
+
+        # write out the ufo structures for COLR
         ufo_color_layers[color_glyph.glyph_name], bounds = _ufo_colr_layers_and_bounds(
             colr_version, colors, color_glyph, glyph_cache
         )

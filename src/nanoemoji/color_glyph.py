@@ -14,6 +14,7 @@
 
 import math
 from absl import logging
+import dataclasses
 from itertools import chain, groupby, combinations
 from lxml import etree  # type: ignore
 from nanoemoji.colors import Color
@@ -22,7 +23,11 @@ from nanoemoji import glyph
 from nanoemoji.paint import (
     Extend,
     ColorStop,
+    CompositeMode,
     Paint,
+    PaintColrLayers,
+    PaintComposite,
+    PaintGlyph,
     PaintLinearGradient,
     PaintRadialGradient,
     PaintSolid,
@@ -32,7 +37,7 @@ from picosvg.geometric_types import Point, Rect
 from picosvg.svg_meta import number_or_percentage
 from picosvg.svg_reuse import normalize, affine_between
 from picosvg.svg_transform import Affine2D
-from picosvg.svg import SVG
+from picosvg.svg import SVG, SVGTraverseContext
 from picosvg.svg_types import (
     SVGPath,
     SVGLinearGradient,
@@ -281,15 +286,43 @@ def _paint(
     return PaintSolid(color=Color.fromstring(shape.fill, alpha=shape.opacity))
 
 
+def _paint_glyph(config: FontConfig, picosvg: SVG, context: SVGTraverseContext, glyph_width: int) -> Paint:
+    shape = context.shape()
+
+    if shape.fill.startswith("url("):
+        fill_el = picosvg.resolve_url(shape.fill, "*")
+        try:
+            glyph_paint = _GRADIENT_INFO[etree.QName(fill_el).localname](
+                config,
+                fill_el,
+                shape.bounding_box(),
+                picosvg.view_box(),
+                glyph_width,
+                shape.opacity,
+            )
+        except ValueError as e:
+            raise ValueError(
+                f"parse failed for {debug_hint}, {etree.tostring(el)[:128]}"
+            ) from e
+    else:
+        glyph_paint = PaintSolid(color=Color.fromstring(shape.fill, alpha=shape.opacity))
+
+    return PaintGlyph(glyph=shape.as_path().d, paint=glyph_paint)
+
+
 def _in_glyph_reuse_key(
-    debug_hint: str, config: FontConfig, picosvg: SVG, shape: SVGPath, glyph_width: int
+    debug_hint: str, config: FontConfig, picosvg: SVG, context: SVGTraverseContext, glyph_width: int
 ) -> Tuple[Paint, SVGPath]:
     """Within a glyph reuse shapes only when painted consistently.
     paint+normalized shape ensures this."""
-    return (
-        _paint(debug_hint, config, picosvg, shape, glyph_width),
-        normalize(shape, config.reuse_tolerance),
-    )
+    if context.element_class() == SVGElementClass.SHAPE:
+        shape = context.shape()
+        return (
+            context.element_class(),
+            _paint(debug_hint, config, picosvg, shape, glyph_width),
+            normalize(shape, config.reuse_tolerance),
+        )
+    return (context.element_class(), context.path)  # unique
 
 
 def _intersect(path1: SVGPath, path2: SVGPath) -> bool:
@@ -332,55 +365,49 @@ def _painted_layers(
     config: FontConfig,
     picosvg: SVG,
     glyph_width: int,
-) -> Generator[PaintedLayer, None, None]:
-    if config.reuse_tolerance < 0:
-        # shape reuse disabled
-        for path in picosvg.shapes():
-            yield PaintedLayer(
-                _paint(debug_hint, config, picosvg, path, glyph_width), path.d
+) -> Tuple[Paint, ...]:
+
+    # TODO shape reuse; normalize the shape and optionally introduce a transform+ref
+
+    defs_seen = False
+    layers = []
+
+    # Reverse to get leaves first because that makes building Paint's easier
+    # shapes *must* be leaves per picosvg
+    nodes = []
+    for context in reversed(tuple(picosvg.breadth_first())):
+        if context.depth() == 0:
+            continue  # svg root
+
+        # picosvg will deliver us exactly one defs and it will be the first child of svg
+        if context.path == "/svg[0]/defs[0]":
+            assert not defs_seen
+            defs_seen = True
+            continue  # defs are pulled in by the consuming paints
+
+        if context.is_shape():
+            nodes.append(_paint_glyph(config, picosvg, context, glyph_width))
+
+        if context.is_group():
+            # flush the current shapes into a new group
+            opacity = float(context.element.get("opacity"))
+            assert 0. < opacity < 1., f"{context.path} should be transparent"
+            assert len(nodes) > 1, f"{context.path} should have 2+ children"
+            assert {"opacity"} == set(context.element.attrib.keys()), f"{context.path} only attribute should be opacity. Found {context.element.attrib.keys()}"
+            paint = PaintComposite(
+                mode=CompositeMode.SRC_IN,
+                source=PaintColrLayers(nodes),
+                backdrop=PaintSolid(Color(0, 0, 0, opacity)),
             )
-        return
+            nodes = [paint]
 
-    # Don't sort; we only want to find groups that are consecutive in the picosvg
-    # to ensure we don't mess up layer order
-    for (paint, normalized), paths in groupby(
-        picosvg.shapes(),
-        key=lambda s: _in_glyph_reuse_key(debug_hint, config, picosvg, s, glyph_width),
-    ):
-        paths = list(paths)
-        transforms = [Affine2D.identity()]
-        if len(paths) > 1:
-            transforms.extend(
-                affine_between(paths[0], p, config.reuse_tolerance) for p in paths[1:]
-            )
 
-        success = True
-        for path, transform in zip(paths[1:], transforms[1:]):
-            if transform is None:
-                success = False
-                error_msg = (
-                    f"{debug_hint} grouped the following paths but no affine_between "
-                    f"could be computed:\n  {paths[0]}\n  {path}"
-                )
-                if config.ignore_reuse_error:
-                    logging.warning(error_msg)
-                else:
-                    raise ValueError(error_msg)
+        if context.depth() == 1:
+            # insert reversed to undo the reversed at the top of loop 
+            layers.insert(0, nodes.pop())
 
-        if success and len(paths) > 1:
-            # Don't create composite glyphs if components intersect each other and
-            # they have a transform which reverses their winding direction, or else this
-            # creates holes where they overlap as nonzero fill rule is applied by
-            # TrueType renderer: https://github.com/googlefonts/nanoemoji/issues/287
-            success = not _any_overlap_with_reversing_transform(
-                debug_hint, paths, transforms
-            )
-
-        if success:
-            yield PaintedLayer(paint, paths[0].d, tuple(transforms[1:]))
-        else:
-            for path in paths:
-                yield PaintedLayer(paint, path.d)
+    assert defs_seen, "We never saw defs, what's up with that?!"
+    return tuple(layers)
 
 
 def _color_glyph_advance_width(view_box: Rect, config: FontConfig) -> int:
@@ -388,6 +415,24 @@ def _color_glyph_advance_width(view_box: Rect, config: FontConfig) -> int:
     # Use the default advance width if it's larger than the proportional one.
     font_height = config.ascender - config.descender  # descender <= 0
     return max(config.width, round(font_height * view_box.w / view_box.h))
+
+
+def _mutating_traverse(paint, mutator):
+    changes = mutator(paint)
+    assert changes is not None, "Return an empty map for no change, not None"
+    for field in dataclasses.fields(paint):
+        try:
+            is_paint = issubclass(field.type, Paint)
+        except TypeError:  # typing.Tuple and friends helpfully fail issubclass
+            is_paint = False
+        if is_paint:
+            current = getattr(paint, field.name)
+            modified = _mutating_traverse(current, mutator)
+            if current is not modified:
+                changes[field.name] = modified
+    if changes:
+        paint = dataclasses.replace(paint, **changes)
+    return paint
 
 
 class ColorGlyph(NamedTuple):
@@ -408,7 +453,7 @@ class ColorGlyph(NamedTuple):
         glyph_id: int,
         codepoints: Tuple[int],
         svg: SVG,
-    ):
+    ) -> "ColorGlyph":
         logging.debug(" ColorGlyph for %s (%s)", filename, codepoints)
         glyph_name = glyph.glyph_name(codepoints)
         base_glyph = ufo.newGlyph(glyph_name)
@@ -479,3 +524,16 @@ class ColorGlyph(NamedTuple):
     def colors(self):
         """Set of Color used by this glyph."""
         return set(chain.from_iterable([p.colors() for p in self.paints()]))
+
+    def traverse(self, visitor):
+        def _traverse_callback(paint):
+            changes = visitor(paint)
+            if changes:
+                raise ValueError("Non-mutating traverse attempted mutation")
+            return {}
+
+        for p in self.painted_layers:
+            _mutating_traverse(p, _traverse_callback)
+
+    def mutating_traverse(self, mutator) -> "ColorGlyph":
+        return self._replace(painted_layers=tuple(_mutating_traverse(p, mutator) for p in self.painted_layers))
