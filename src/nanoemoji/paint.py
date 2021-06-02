@@ -72,6 +72,12 @@ class CompositeMode(IntEnum):
 
 
 @dataclasses.dataclass(frozen=True)
+class PaintTraverseContext:
+    path: Tuple["Paint", ...]
+    paint: "Paint"
+
+
+@dataclasses.dataclass(frozen=True)
 class ColorStop:
     stopOffset: float = 0.0
     color: Color = css_color("black")
@@ -85,12 +91,13 @@ class Paint:
     def to_ufo_paint(self, colors: Sequence[Color]):
         raise NotImplementedError()
 
-    def breadth_first(self) -> Generator["Paint", None, None]:
-        frontier = [self]
+    def breadth_first(self) -> Generator[PaintTraverseContext, None, None]:
+        frontier = [PaintTraverseContext((), self)]
         while frontier:
-            paint = frontier.pop(0)
-            yield paint
-            frontier.extend(paint.children())
+            context = frontier.pop(0)
+            yield context
+            for paint in context.paint.children():
+                frontier.append(PaintTraverseContext(context.path + (self,), paint))
 
     def children(self) -> Iterable["Paint"]:
         return ()
@@ -247,6 +254,29 @@ class PaintTransform(Paint):
             "Format": self.format,
             "Transform": self.transform,
             "Paint": self.paint.to_ufo_paint(colors),
+        }
+        return paint
+
+    def children(self) -> Iterable[Paint]:
+        return (self.paint,)
+
+
+@dataclasses.dataclass(frozen=True)
+class PaintTranslate(Paint):
+    format: ClassVar[int] = int(ot.PaintFormat.PaintTranslate)
+    paint: Paint
+    dx: float
+    dy: float
+
+    def colors(self):
+        yield from self.paint.colors()
+
+    def to_ufo_paint(self, colors):
+        paint = {
+            "Format": self.format,
+            "Paint": self.paint.to_ufo_paint(colors),
+            "dx": self.dx,
+            "dy": self.dy,
         }
         return paint
 

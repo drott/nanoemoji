@@ -427,9 +427,16 @@ def _color_glyph_advance_width(view_box: Rect, config: FontConfig) -> int:
 
 
 def _mutating_traverse(paint, mutator):
-    changes = mutator(paint)
-    assert changes is not None, "Return an empty map for no change, not None"
-    for field in dataclasses.fields(paint):
+    paint = mutator(paint)
+    assert paint is not None, "Return the input for no change, not None"
+
+    try:
+        fields = dataclasses.fields(paint)
+    except TypeError as e:
+        raise ValueError(f"{paint} is not a dataclass?") from e
+
+    changes = {}
+    for field in fields:
         try:
             is_paint = issubclass(field.type, Paint)
         except TypeError:  # typing.Tuple and friends helpfully fail issubclass
@@ -536,10 +543,8 @@ class ColorGlyph(NamedTuple):
 
     def traverse(self, visitor):
         def _traverse_callback(paint):
-            changes = visitor(paint)
-            if changes:
-                raise ValueError("Non-mutating traverse attempted mutation")
-            return {}
+            updated_paint = visitor(paint)
+            return paint
 
         for p in self.painted_layers:
             _mutating_traverse(p, _traverse_callback)

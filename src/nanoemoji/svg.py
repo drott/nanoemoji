@@ -46,9 +46,7 @@ _DEFAULT_ROUND_NDIGITS = 3
 
 class InterGlyphReuseKey(NamedTuple):
     view_box: Rect
-    paint: Paint
-    path: str
-    reuses: Tuple[Affine2D]
+    paint: PaintGlyph
 
 
 class GradientReuseKey(NamedTuple):
@@ -87,14 +85,19 @@ def _glyph_groups(color_glyphs: Sequence[ColorGlyph]) -> Tuple[Tuple[str, ...]]:
     reuse_groups = DisjointSet()
     for color_glyph in color_glyphs:
         reuse_groups.make_set(color_glyph.glyph_name)
-        for painted_layer in color_glyph.painted_layers:
-            reuse_key = _inter_glyph_reuse_key(
-                color_glyph.svg.view_box(), painted_layer
-            )
-            if reuse_key not in glyphs:
-                glyphs[reuse_key] = color_glyph.glyph_name
-            else:
-                reuse_groups.union(color_glyph.glyph_name, glyphs[reuse_key])
+        for root in color_glyph.painted_layers:
+            for context in root.breadth_first():
+                # Group glyphs based on common shapes
+                if not isinstance(context.paint, PaintGlyph):
+                    continue
+                reuse_key = _inter_glyph_reuse_key(
+                    color_glyph.svg.view_box(), context.paint
+                )
+
+                if reuse_key not in glyphs:
+                    glyphs[reuse_key] = color_glyph.glyph_name
+                else:
+                    reuse_groups.union(color_glyph.glyph_name, glyphs[reuse_key])
 
     return reuse_groups.sorted()
 
@@ -108,17 +111,13 @@ def _svg_matrix(transform: Affine2D) -> str:
     return transform.round(_DEFAULT_ROUND_NDIGITS).tostring()
 
 
-def _inter_glyph_reuse_key(
-    view_box: Rect, painted_layer: PaintedLayer
-) -> InterGlyphReuseKey:
+def _inter_glyph_reuse_key(view_box: Rect, paint: PaintGlyph) -> InterGlyphReuseKey:
     """Individual glyf entries, including composites, can be reused.
     SVG reuses w/paint so paint is part of key."""
 
     # TODO we could recycle shapes that differ only in paint, would just need to
     # transfer the paint attributes onto the use element if they differ
-    return InterGlyphReuseKey(
-        view_box, painted_layer.paint, painted_layer.path, painted_layer.reuses
-    )
+    return InterGlyphReuseKey(view_box, paint)
 
 
 def _apply_solid_paint(svg_path: etree.Element, paint: PaintSolid):
@@ -322,45 +321,68 @@ def _add_glyph(svg: SVG, color_glyph: ColorGlyph, reuse_cache: ReuseCache):
     upem_to_vbox = vbox_to_upem.inverse()
 
     # copy the shapes into our svg
-    for painted_layer in color_glyph.painted_layers:
-        reuse_key = _inter_glyph_reuse_key(view_box, painted_layer)
-        if reuse_key not in reuse_cache.shapes:
-            el = to_element(SVGPath(d=painted_layer.path))
+    el_by_paint = {}
+    complete_paths = set()
+    for root in color_glyph.painted_layers:
+        for context in root.breadth_first():
+            if any(c == context.path[: len(c)] for c in complete_paths):
+                continue
 
-            _apply_paint(svg_defs, el, painted_layer.paint, upem_to_vbox, reuse_cache)
+            parent_el = svg_g
+            if context.path:
+                parent_el = context.path[-1]
 
-            svg_g.append(el)
-            reuse_cache.shapes[reuse_key] = el
-        else:
-            el = reuse_cache.shapes[reuse_key]
-            _ensure_has_id(el)
+            if isinstance(context.paint, PaintGlyph):
+                reuse_key = _inter_glyph_reuse_key(view_box, context.paint)
+                if reuse_key not in reuse_cache.shapes:
+                    el = to_element(SVGPath(d=context.paint.glyph))
 
-            # we have an inter-glyph shape reuse: move the reused element to the outer
-            # <defs> and replace its first occurrence with a <use>. Adobe Illustrator
-            # doesn't support direct references between glyphs:
-            # https://github.com/googlefonts/nanoemoji/issues/264#issuecomment-820518808
-            if el not in svg_defs:
-                svg_use = etree.Element("use", nsmap=svg.svg_root.nsmap)
-                svg_use.attrib[_XLINK_HREF_ATTR_NAME] = f'#{el.attrib["id"]}'
-                el.addnext(svg_use)
-                svg_defs.append(el)  # append moves
+                    _apply_paint(
+                        svg_defs, el, context.paint.paint, upem_to_vbox, reuse_cache
+                    )
 
-            svg_use = etree.SubElement(svg_g, "use", nsmap=svg.svg_root.nsmap)
-            svg_use.attrib[_XLINK_HREF_ATTR_NAME] = f'#{el.attrib["id"]}'
+                    parent_el.append(el)
+                    reuse_cache.shapes[reuse_key] = el
+                else:
+                    el = reuse_cache.shapes[reuse_key]
+                    _ensure_has_id(el)
 
-        for reuse in painted_layer.reuses:
-            # intra-glyph shape reuse
-            _ensure_has_id(el)
-            svg_use = etree.SubElement(svg_g, "use", nsmap=svg.svg_root.nsmap)
-            svg_use.attrib[_XLINK_HREF_ATTR_NAME] = f'#{el.attrib["id"]}'
-            tx, ty = reuse.gettranslate()
-            if tx:
-                svg_use.attrib["x"] = _ntos(tx)
-            if ty:
-                svg_use.attrib["y"] = _ntos(ty)
-            transform = reuse.translate(-tx, -ty)
-            if transform != Affine2D.identity():
-                svg_use.attrib["transform"] = _svg_matrix(transform)
+                    # we have an inter-glyph shape reuse: move the reused element to the outer
+                    # <defs> and replace its first occurrence with a <use>. Adobe Illustrator
+                    # doesn't support direct references between glyphs:
+                    # https://github.com/googlefonts/nanoemoji/issues/264#issuecomment-820518808
+                    if el not in svg_defs:
+                        svg_use = etree.Element("use", nsmap=svg.svg_root.nsmap)
+                        svg_use.attrib[_XLINK_HREF_ATTR_NAME] = f'#{el.attrib["id"]}'
+                        el.addnext(svg_use)
+                        svg_defs.append(el)  # append moves
+
+                    svg_use = etree.SubElement(
+                        parent_el, "use", nsmap=svg.svg_root.nsmap
+                    )
+                    svg_use.attrib[_XLINK_HREF_ATTR_NAME] = f'#{el.attrib["id"]}'
+
+                complete_paths.add(context.path + (context.paint,))
+            else:
+                for cp in complete_paths:
+                    print("SKIP", cp)
+                for p in context.path:
+                    print("  ", p)
+                raise ValueError(f"What do we do with {context}")
+                # TODO reuse
+                # for reuse in painted_layer.reuses:
+                #     # intra-glyph shape reuse
+                #     _ensure_has_id(el)
+                #     svg_use = etree.SubElement(svg_g, "use", nsmap=svg.svg_root.nsmap)
+                #     svg_use.attrib[_XLINK_HREF_ATTR_NAME] = f'#{el.attrib["id"]}'
+                #     tx, ty = reuse.gettranslate()
+                #     if tx:
+                #         svg_use.attrib["x"] = _ntos(tx)
+                #     if ty:
+                #         svg_use.attrib["y"] = _ntos(ty)
+                #     transform = reuse.translate(-tx, -ty)
+                #     if transform != Affine2D.identity():
+                #         svg_use.attrib["transform"] = _svg_matrix(transform)
 
 
 def _ensure_ttfont_fully_decompiled(ttfont: ttLib.TTFont):

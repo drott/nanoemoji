@@ -161,23 +161,26 @@ def test_decompose_uniform_transform(transform, expected):
 
 def _round_coords(paint, prec=5):
     if isinstance(paint, PaintLinearGradient):
-        return {
-            "p0": Point(round(paint.p0.x, prec), round(paint.p0.y, prec)),
-            "p1": Point(round(paint.p1.x, prec), round(paint.p1.y, prec)),
-            "p2": Point(round(paint.p2.x, prec), round(paint.p2.y, prec)),
-        }
+        return dataclasses.replace(
+            paint,
+            p0=Point(round(paint.p0.x, prec), round(paint.p0.y, prec)),
+            p1=Point(round(paint.p1.x, prec), round(paint.p1.y, prec)),
+            p2=Point(round(paint.p2.x, prec), round(paint.p2.y, prec)),
+        )
     if isinstance(paint, PaintRadialGradient):
-        return {
-            "c0": Point(round(paint.c0.x, prec), round(paint.c0.y, prec)),
-            "c1": Point(round(paint.c1.x, prec), round(paint.c1.y, prec)),
-            "r0": round(paint.r0, prec),
-            "r1": round(paint.r1, prec),
-        }
+        return dataclasses.replace(
+            paint,
+            c0=Point(round(paint.c0.x, prec), round(paint.c0.y, prec)),
+            c1=Point(round(paint.c1.x, prec), round(paint.c1.y, prec)),
+            r0=round(paint.r0, prec),
+            r1=round(paint.r1, prec),
+        )
     if isinstance(paint, PaintTransform):
-        return {
-            "transform": tuple(round(v, prec) for v in paint.transform),
-        }
-    return {}
+        return dataclasses.replace(
+            paint,
+            transform=tuple(round(v, prec) for v in paint.transform),
+        )
+    return paint
 
 
 @pytest.mark.parametrize(
