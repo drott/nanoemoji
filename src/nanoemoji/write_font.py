@@ -268,9 +268,7 @@ def _create_glyph(color_glyph: ColorGlyph, paint: PaintGlyph) -> Glyph:
             )
     else:
         # Not a composite, just draw directly on the glyph
-        draw_svg_path(
-            SVGPath(d=paint.glyph), glyph.getPen(), svg_units_to_font_units
-        )
+        draw_svg_path(SVGPath(d=paint.glyph), glyph.getPen(), svg_units_to_font_units)
 
     ufo.glyphOrder += glyph_names
 
@@ -311,7 +309,9 @@ def _glyf_ufo(ufo, color_glyphs):
         parent_glyph = ufo[color_glyph.glyph_name]
 
         # generate glyphs for PaintGlyph's and assign glyph names
-        color_glyphs[i] = color_glyph = _migrate_paths_to_ufo_glyphs(color_glyph, glyph_cache)
+        color_glyphs[i] = color_glyph = _migrate_paths_to_ufo_glyphs(
+            color_glyph, glyph_cache
+        )
 
         for root in color_glyph.painted_layers:
             for paint in root.breadth_first():
@@ -335,9 +335,7 @@ def _glyf_ufo(ufo, color_glyphs):
             assert component.name == color_glyph.glyph_name
 
 
-def _colr_layer(
-    colr_version: int, root: Paint, palette: Sequence[Color]
-):
+def _colr_layer(colr_version: int, root: Paint, palette: Sequence[Color]):
     # For COLRv0, we just name a glyph and paint it a color
     # For COLRv1, it's a data structure describing paint
     if colr_version == 0:
@@ -386,6 +384,7 @@ def _ufo_colr_layers_and_bounds(colr_version, colors, color_glyph, glyph_cache):
     colr_layers = []
 
     bounds = None
+
     def _update_bounds(paint):
         if not isinstance(paint, PaintGlyph):
             return
@@ -397,6 +396,7 @@ def _ufo_colr_layers_and_bounds(colr_version, colors, color_glyph, glyph_cache):
                 bounds = glyph_bbox
             else:
                 bounds = unionRect(bounds, glyph_bbox)
+
     color_glyph.traverse(_update_bounds)
 
     # accumulate layers in z-order
@@ -442,7 +442,9 @@ def _colr_ufo(colr_version, ufo, color_glyphs):
         )
 
         # generate glyphs for PaintGlyph's and assign glyph names
-        color_glyphs[i] = color_glyph = _migrate_paths_to_ufo_glyphs(color_glyph, glyph_cache)
+        color_glyphs[i] = color_glyph = _migrate_paths_to_ufo_glyphs(
+            color_glyph, glyph_cache
+        )
 
         # write out the ufo structures for COLR
         ufo_color_layers[color_glyph.glyph_name], bounds = _ufo_colr_layers_and_bounds(

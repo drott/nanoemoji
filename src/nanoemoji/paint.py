@@ -21,7 +21,16 @@ from enum import Enum, IntEnum
 from fontTools.ttLib.tables import otTables as ot
 from nanoemoji.colors import Color, css_color
 from picosvg.geometric_types import Point
-from typing import Any, ClassVar, Generator, Iterable, Mapping, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    ClassVar,
+    Generator,
+    Iterable,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 
 class Extend(Enum):

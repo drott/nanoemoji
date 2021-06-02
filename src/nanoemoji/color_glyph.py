@@ -286,7 +286,9 @@ def _paint(
     return PaintSolid(color=Color.fromstring(shape.fill, alpha=shape.opacity))
 
 
-def _paint_glyph(config: FontConfig, picosvg: SVG, context: SVGTraverseContext, glyph_width: int) -> Paint:
+def _paint_glyph(
+    config: FontConfig, picosvg: SVG, context: SVGTraverseContext, glyph_width: int
+) -> Paint:
     shape = context.shape()
 
     if shape.fill.startswith("url("):
@@ -305,13 +307,19 @@ def _paint_glyph(config: FontConfig, picosvg: SVG, context: SVGTraverseContext, 
                 f"parse failed for {debug_hint}, {etree.tostring(el)[:128]}"
             ) from e
     else:
-        glyph_paint = PaintSolid(color=Color.fromstring(shape.fill, alpha=shape.opacity))
+        glyph_paint = PaintSolid(
+            color=Color.fromstring(shape.fill, alpha=shape.opacity)
+        )
 
     return PaintGlyph(glyph=shape.as_path().d, paint=glyph_paint)
 
 
 def _in_glyph_reuse_key(
-    debug_hint: str, config: FontConfig, picosvg: SVG, context: SVGTraverseContext, glyph_width: int
+    debug_hint: str,
+    config: FontConfig,
+    picosvg: SVG,
+    context: SVGTraverseContext,
+    glyph_width: int,
 ) -> Tuple[Paint, SVGPath]:
     """Within a glyph reuse shapes only when painted consistently.
     paint+normalized shape ensures this."""
@@ -391,9 +399,11 @@ def _painted_layers(
         if context.is_group():
             # flush the current shapes into a new group
             opacity = float(context.element.get("opacity"))
-            assert 0. < opacity < 1., f"{context.path} should be transparent"
+            assert 0.0 < opacity < 1.0, f"{context.path} should be transparent"
             assert len(nodes) > 1, f"{context.path} should have 2+ children"
-            assert {"opacity"} == set(context.element.attrib.keys()), f"{context.path} only attribute should be opacity. Found {context.element.attrib.keys()}"
+            assert {"opacity"} == set(
+                context.element.attrib.keys()
+            ), f"{context.path} only attribute should be opacity. Found {context.element.attrib.keys()}"
             paint = PaintComposite(
                 mode=CompositeMode.SRC_IN,
                 source=PaintColrLayers(nodes),
@@ -401,9 +411,8 @@ def _painted_layers(
             )
             nodes = [paint]
 
-
         if context.depth() == 1:
-            # insert reversed to undo the reversed at the top of loop 
+            # insert reversed to undo the reversed at the top of loop
             layers.insert(0, nodes.pop())
 
     assert defs_seen, "We never saw defs, what's up with that?!"
@@ -536,4 +545,8 @@ class ColorGlyph(NamedTuple):
             _mutating_traverse(p, _traverse_callback)
 
     def mutating_traverse(self, mutator) -> "ColorGlyph":
-        return self._replace(painted_layers=tuple(_mutating_traverse(p, mutator) for p in self.painted_layers))
+        return self._replace(
+            painted_layers=tuple(
+                _mutating_traverse(p, mutator) for p in self.painted_layers
+            )
+        )

@@ -159,7 +159,7 @@ def test_decompose_uniform_transform(transform, expected):
     assert _decompose_uniform_transform(transform) == expected
 
 
-def _round_coords(paint, prec=6):
+def _round_coords(paint, prec=5):
     if isinstance(paint, PaintLinearGradient):
         return {
             "p0": Point(round(paint.p0.x, prec), round(paint.p0.y, prec)),
@@ -248,7 +248,7 @@ def _round_coords(paint, prec=6):
                 PaintGlyph(
                     glyph="M2,2 L8,2 L8,4 L2,4 L2,2 Z",
                     paint=PaintTransform(
-                        transform=(1.0, 0.0, 0.0, 0.333333, 0.0, 0.0),
+                        transform=(1.0, 0.0, 0.0, 0.33333, 0.0, 0.0),
                         paint=PaintRadialGradient(
                             extend=Extend.REPEAT,
                             stops=(
@@ -275,7 +275,7 @@ def _round_coords(paint, prec=6):
                 PaintGlyph(
                     glyph="M0,0 L1000,0 L1000,1000 L0,1000 L0,0 Z",
                     paint=PaintTransform(
-                        transform=(0.939693, 0.0, -0.34202, 0.939693, 0.0, 0.0),
+                        transform=(0.93969, 0.0, -0.34202, 0.93969, 0.0, 0.0),
                         paint=PaintRadialGradient(
                             stops=(
                                 ColorStop(
@@ -288,10 +288,10 @@ def _round_coords(paint, prec=6):
                                     stopOffset=1.0, color=Color.fromstring("darkblue")
                                 ),
                             ),
-                            c0=Point(x=733.186809, y=532.088886),
-                            c1=Point(x=733.186809, y=532.088886),
+                            c0=Point(x=733.1865, y=532.08885),
+                            c1=Point(x=733.1865, y=532.08885),
                             r0=0,
-                            r1=532.088886,
+                            r1=532.08885,
                         ),
                     ),
                 ),
@@ -374,7 +374,7 @@ def _round_coords(paint, prec=6):
                             c0=Point(x=-973.125, y=301.77018),
                             c1=Point(x=-973.125, y=301.77018),
                             r0=0.0,
-                            r1=129.015625,
+                            r1=129.01562,
                         ),
                     ),
                 ),
@@ -406,7 +406,7 @@ def _round_coords(paint, prec=6):
                 PaintGlyph(
                     glyph="M2,5 L8,5 L8,7 L2,7 L2,5 Z",
                     paint=PaintTransform(
-                        transform=(1.0, 0.0, 0.0, 0.333333, 0, 0),
+                        transform=(1.0, 0.0, 0.0, 0.33333, 0, 0),
                         paint=PaintRadialGradient(
                             stops=(
                                 ColorStop(
