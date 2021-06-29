@@ -87,6 +87,11 @@ flags.DEFINE_bool(
     "Whether to fail or continue with a warning when picosvg cannot compute "
     "affine between paths that normalize the same.",
 )
+flags.DEFINE_bool(
+    "pretty_print",
+    None,
+    "Whether to prefer pretty printed content whenever possible (for testing).",
+)
 
 
 class Axis(NamedTuple):
@@ -128,6 +133,7 @@ class FontConfig(NamedTuple):
     output: str = "font"
     fea_file: str = "features.fea"
     codepointmap_file: str = "codepointmap.csv"
+    pretty_print: bool = False
     axes: Tuple[Axis, ...] = ()
     masters: Tuple[MasterConfig, ...] = ()
     source_names: Tuple[str, ...] = ()
@@ -176,6 +182,7 @@ def write(dest: Path, config: FontConfig):
         "ignore_reuse_error": config.ignore_reuse_error,
         "keep_glyph_names": config.keep_glyph_names,
         "clip_to_viewbox": config.clip_to_viewbox,
+        "pretty_print": config.pretty_print,
         "output": config.output,
         "axis": {
             a.axisTag: {
@@ -258,6 +265,7 @@ def load(config_file: Path = None, additional_srcs: Tuple[Path] = None) -> FontC
     ignore_reuse_error = _pop_flag(config, "ignore_reuse_error")
     keep_glyph_names = _pop_flag(config, "keep_glyph_names")
     clip_to_viewbox = _pop_flag(config, "clip_to_viewbox")
+    pretty_print = _pop_flag(config, "pretty_print")
     output = _pop_flag(config, "output")
 
     axes = []
@@ -333,6 +341,7 @@ def load(config_file: Path = None, additional_srcs: Tuple[Path] = None) -> FontC
         ignore_reuse_error=ignore_reuse_error,
         keep_glyph_names=keep_glyph_names,
         clip_to_viewbox=clip_to_viewbox,
+        pretty_print=pretty_print,
         output=output,
         fea_file=_DEFAULT_CONFIG.fea_file,
         codepointmap_file=_DEFAULT_CONFIG.codepointmap_file,

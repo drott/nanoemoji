@@ -21,6 +21,7 @@ from enum import Enum, IntEnum
 from fontTools.ttLib.tables import otTables as ot
 from nanoemoji.colors import Color, css_color
 from picosvg.geometric_types import Point
+from picosvg.svg_transform import Affine2D
 from typing import (
     Any,
     ClassVar,
@@ -75,6 +76,7 @@ class CompositeMode(IntEnum):
 class PaintTraverseContext:
     path: Tuple["Paint", ...]
     paint: "Paint"
+    transform: Affine2D
 
 
 @dataclasses.dataclass(frozen=True)
@@ -92,12 +94,20 @@ class Paint:
         raise NotImplementedError()
 
     def breadth_first(self) -> Generator[PaintTraverseContext, None, None]:
-        frontier = [PaintTraverseContext((), self)]
+        frontier = [PaintTraverseContext((), self, Affine2D.identity())]
         while frontier:
             context = frontier.pop(0)
             yield context
+            transform = context.transform
+            # TODO paint variants
+            if context.paint.format == PaintTransform.format:
+                transform = Affine2D.compose_ltr(
+                    (transform, Affine2D(*context.paint.transform))
+                )
             for paint in context.paint.children():
-                frontier.append(PaintTraverseContext(context.path + (self,), paint))
+                frontier.append(
+                    PaintTraverseContext(context.path + (self,), paint, transform)
+                )
 
     def children(self) -> Iterable["Paint"]:
         return ()

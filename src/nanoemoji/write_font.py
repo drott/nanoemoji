@@ -85,7 +85,9 @@ class InputGlyph(NamedTuple):
 # Where possible code to the ufo and let apply_ttfont be a nop.
 class ColorGenerator(NamedTuple):
     apply_ufo: Callable[[ufoLib2.Font, Sequence[ColorGlyph]], None]
-    apply_ttfont: Callable[[ufoLib2.Font, Sequence[ColorGlyph], ttLib.TTFont], None]
+    apply_ttfont: Callable[
+        [FontConfig, ufoLib2.Font, Sequence[ColorGlyph], ttLib.TTFont], None
+    ]
     font_ext: str  # extension for font binary, .ttf or .otf
 
 
@@ -206,7 +208,7 @@ def _make_ttfont(config, ufo, color_glyphs):
 
     # Permit fixups where we can't express something adequately in UFO
     _COLOR_FORMAT_GENERATORS[config.color_format].apply_ttfont(
-        ufo, color_glyphs, ttfont
+        config, ufo, color_glyphs, ttfont
     )
 
     return ttfont
@@ -237,7 +239,6 @@ class ReuseResult(NamedTuple):
     transform: Affine2D
 
 
-# TODO we won't reuse components this way!
 class GlyphReuseCache:
     def __init__(self, config: FontConfig):
         self._config = config
@@ -247,6 +248,8 @@ class GlyphReuseCache:
     def try_reuse(self, path: str) -> Optional[ReuseResult]:
         """Try to reproduce path as the transformation of another glyph.
 
+        Path is expected to be in font units.
+
         Returns (glyph name, transform) if possible, (input path, identity) if not.
         """
         assert (
@@ -255,8 +258,13 @@ class GlyphReuseCache:
         print("try_reuse", path)
         assert path.startswith("M"), f"{path} doesn't look like a path"
 
+        if self._config.reuse_tolerance == -1:
+            print("  reuse disabled")
+            return None
+
         norm_path = normalize(SVGPath(d=path), self._config.reuse_tolerance).d
         if norm_path not in self._reusable_paths:
+            print(f"  not in reusable {norm_path}")
             return None
 
         glyph_name, glyph_path = self._reusable_paths[norm_path]
@@ -264,12 +272,17 @@ class GlyphReuseCache:
             SVGPath(d=glyph_path), SVGPath(d=path), self._config.reuse_tolerance
         )
         if affine is None:
+            print(f"  affine_between failed {norm_path}")
             return None
+        print(f"  reuse! {norm_path} {affine}")
         return ReuseResult(glyph_name, affine)
 
     def add_glyph(self, glyph_name, glyph_path):
         assert glyph_path.startswith("M"), f"{glyph_path} doesn't look like a path"
-        norm_path = normalize(SVGPath(d=glyph_path), self._config.reuse_tolerance).d
+        if self._config.reuse_tolerance != -1:
+            norm_path = normalize(SVGPath(d=glyph_path), self._config.reuse_tolerance).d
+        else:
+            norm_path = glyph_path
         self._reusable_paths[norm_path] = (glyph_name, glyph_path)
         self._known_glyphs.add(glyph_name)
         print("Capture", glyph_name, "=>", norm_path)
@@ -278,49 +291,57 @@ class GlyphReuseCache:
         return glyph_name in self._known_glyphs
 
 
-def _create_glyph(color_glyph: ColorGlyph, paint: PaintGlyph) -> Glyph:
+def _create_glyph(
+    color_glyph: ColorGlyph, paint: PaintGlyph, path_in_font_space: str
+) -> Glyph:
+    glyph = _init_glyph(color_glyph)
     ufo = color_glyph.ufo
+    draw_svg_path(SVGPath(d=path_in_font_space), glyph.getPen())
+    ufo.glyphOrder += [glyph.name]
+    return glyph
 
-    glyph = ufo.newGlyph(_next_name(ufo, lambda i: f"{color_glyph.glyph_name}.{i}"))
-    glyph_names = [glyph.name]
-    glyph.width = ufo.get(color_glyph.glyph_name).width
 
+def _migrate_paths_to_ufo_glyphs(
+    color_glyph: ColorGlyph, glyph_cache: GlyphReuseCache
+) -> ColorGlyph:
     svg_units_to_font_units = color_glyph.transform_for_font_space()
 
-    if False:  # TODO restore reuse of shapes
-        # Shape repeats, form a composite
-        base_glyph = ufo.newGlyph(
-            _next_name(ufo, lambda i: f"{glyph.name}.component.{i}")
-        )
-        glyph_names.append(base_glyph.name)
+    # Walk through the color glyph, where we see a PaintGlyph take the path out of it,
+    # move the path into font coordinates, generate a ufo glyph, and push the name of
+    # the ufo glyph into the PaintGlyph
+    def _update_paint_glyph(paint):
+        if paint.format != PaintGlyph.format:
+            return paint
 
-        draw_svg_path(
-            SVGPath(d=painted_layer.path), base_glyph.getPen(), svg_units_to_font_units
+        if glyph_cache.is_known_glyph(paint.glyph):
+            return paint
+
+        assert paint.glyph.startswith("M"), f"{paint.glyph} doesn't look like a path"
+        path_in_font_space = (
+            SVGPath(d=paint.glyph).apply_transform(svg_units_to_font_units).d
         )
 
-        glyph.components.append(
-            Component(baseGlyph=base_glyph.name, transformation=Affine2D.identity())
-        )
-
-        for transform in painted_layer.reuses:
-            # We already drew the component into font space; transform is in SVG space
-            transform = Affine2D.compose_ltr(
-                (
-                    svg_units_to_font_units.inverse(),
-                    transform,
-                    svg_units_to_font_units,
+        reuse_result = glyph_cache.try_reuse(path_in_font_space)
+        if reuse_result is not None:
+            # TODO: use the most compact valid transform
+            # TODO: when is it more compact to use a new transforming glyph?
+            paint = PaintGlyph(
+                glyph=reuse_result.glyph_name,
+                paint=paint.paint,
+            )
+            if reuse_result.transform != Affine2D.identity():
+                paint = PaintTransform(
+                    paint=paint, transform=tuple(reuse_result.transform)
                 )
-            )
-            glyph.components.append(
-                Component(baseGlyph=base_glyph.name, transformation=transform)
-            )
-    else:
-        # Not a composite, just draw directly on the glyph
-        draw_svg_path(SVGPath(d=paint.glyph), glyph.getPen(), svg_units_to_font_units)
+            return paint
 
-    ufo.glyphOrder += glyph_names
+        glyph = _create_glyph(color_glyph, paint, path_in_font_space)
+        glyph_cache.add_glyph(glyph.name, path_in_font_space)
 
-    return glyph
+        print("return", dataclasses.replace(paint, glyph=glyph.name))
+        return dataclasses.replace(paint, glyph=glyph.name)
+
+    return color_glyph.mutating_traverse(_update_paint_glyph)
 
 
 def _draw_glyph_extents(
@@ -343,10 +364,12 @@ def _draw_glyph_extents(
     return glyph
 
 
-def _glyf_ufo(ufo, color_glyphs):
+def _glyf_ufo(
+    config: FontConfig, ufo: ufoLib2.Font, color_glyphs: Sequence[ColorGlyph]
+):
     # glyphs by reuse_key
-    glyph_cache = {}
-    reused = set()
+    glyph_cache = GlyphReuseCache(config)
+    glyph_uses = defaultdict(int)
     for i, color_glyph in enumerate(color_glyphs):
         logging.debug(
             "%s %s %s",
@@ -364,17 +387,20 @@ def _glyf_ufo(ufo, color_glyphs):
         for root in color_glyph.painted_layers:
             for context in root.breadth_first():
                 # For 'glyf' just dump anything that isn't a PaintGlyph
-                if not isinstance(context.paint, PaintGlyph):
+                if context.paint.format != PaintGlyph.format:
                     continue
-                glyph = glyph_cache[context.paint.glyph]
-                parent_glyph.components.append(Component(baseGlyph=glyph.name))
+                glyph = ufo.get(context.paint.glyph)
+                parent_glyph.components.append(
+                    Component(baseGlyph=glyph.name, transformation=context.transform)
+                )
+                glyph_uses[glyph.name] += 1
 
+    # No great reason to keep single-component glyphs around (unless reused)
     for color_glyph in color_glyphs:
         parent_glyph = ufo[color_glyph.glyph_name]
-        # No great reason to keep single-component glyphs around (unless reused)
         if (
             len(parent_glyph.components) == 1
-            and parent_glyph.components[0].baseGlyph not in reused
+            and glyph_uses[parent_glyph.components[0].baseGlyph] == 1
         ):
             component = ufo[parent_glyph.components[0].baseGlyph]
             del ufo[component.name]
@@ -383,77 +409,82 @@ def _glyf_ufo(ufo, color_glyphs):
             assert component.name == color_glyph.glyph_name
 
 
-def _colr_layer(colr_version: int, root: Paint, palette: Sequence[Color]):
-    # For COLRv0, we just name a glyph and paint it a color
-    # For COLRv1, it's a data structure describing paint
-    if colr_version == 0:
-        # COLRv0: find the first PaintGlyph we can and color it in the first color
-        # Results for complex structures will be suboptimal :)
+def _name_prefix(color_glyph: ColorGlyph) -> Glyph:
+    return f"{color_glyph.glyph_name}."
+
+
+def _init_glyph(color_glyph: ColorGlyph) -> Glyph:
+    ufo = color_glyph.ufo
+    glyph = ufo.newGlyph(_next_name(ufo, lambda i: f"{_name_prefix(color_glyph)}{i}"))
+    glyph.width = ufo.get(color_glyph.glyph_name).width
+    return glyph
+
+
+def _create_transformed_glyph(
+    color_glyph: ColorGlyph, paint: PaintGlyph, transform: Affine2D
+) -> Glyph:
+    glyph = _init_glyph(color_glyph)
+    print("_create_transformed_glyph", transform)
+    glyph.components.append(Component(baseGlyph=paint.glyph, transformation=transform))
+    color_glyph.ufo.glyphOrder += [glyph.name]
+
+    return glyph
+
+
+def _colr0_layers(color_glyph: ColorGlyph, root: Paint, palette: Sequence[Color]):
+    # COLRv0: write out each PaintGlyph we see in it's first color
+    # If we see a transformed glyph generate a component
+    # Results for complex structures will be suboptimal :)
+    ufo = color_glyph.ufo
+    layers = []
+    for context in root.breadth_first():
+        if context.paint.format != PaintGlyph.format:
+            continue
+
+        color = next(context.paint.colors())
+        glyph_name = context.paint.glyph
+
+        if context.transform != Affine2D.identity():
+            glyph_name = _create_transformed_glyph(
+                color_glyph, context.paint, context.transform
+            ).name
+
+        layers.append((glyph_name, palette.index(color)))
+    return layers
+
+
+def _bounds(color_glyph: ColorGlyph):
+    bounds = None
+    for root in color_glyph.painted_layers:
         for context in root.breadth_first():
-            if isinstance(context.paint, PaintGlyph):
-                color = next(context.paint.colors())
-                return (context.paint.glyph, palette.index(color))
-        raise ValueError("No PaintGlyph available, cannot emit COLR v0")
-    elif colr_version == 1:
-        return root.to_ufo_paint(palette)
-
-    else:
-        raise ValueError(f"Unsupported COLR version: {colr_version}")
-
-
-def _migrate_paths_to_ufo_glyphs(
-    color_glyph: ColorGlyph, glyph_cache: GlyphReuseCache
-) -> ColorGlyph:
-    # Walk through the color glyph, where we see a PaintGlyph take the path out of it,
-    # generate a ufo glyph, and push the name of the ufo glyph into the PaintGlyph
-    def _update_paint_glyph(paint):
-        if not isinstance(paint, PaintGlyph):
-            return paint
-
-        if glyph_cache.is_known_glyph(paint.glyph):
-            return paint
-
-        reuse_result = glyph_cache.try_reuse(paint.glyph)
-        if reuse_result:
-            return PaintTransform(
-                paint=PaintGlyph(
-                    glyph=reuse_result.glyph_name,
-                    paint=paint.paint,
-                ),
-                transform=tuple(reuse_result.transform),
-            )
-
-        glyph = _create_glyph(color_glyph, paint)
-        glyph_cache.add_glyph(glyph.name, paint.glyph)
-        return dataclasses.replace(paint, glyph=glyph.name)
-
-    return color_glyph.mutating_traverse(_update_paint_glyph)
+            if context.paint.format == PaintGlyph.format:
+                glyph = color_glyph.ufo.get(context.paint.glyph)
+                glyph_bbox = glyph.getControlBounds(color_glyph.ufo)
+                if glyph_bbox is None:
+                    continue
+                glyph_bbox = tuple(context.transform.map_point(glyph_bbox[:2])) + tuple(
+                    context.transform.map_point(glyph_bbox[2:])
+                )
+                if bounds is None:
+                    bounds = glyph_bbox
+                else:
+                    bounds = unionRect(bounds, glyph_bbox)
+    return bounds
 
 
-def _ufo_colr_layers_and_bounds(colr_version, colors, color_glyph, glyph_cache):
+def _ufo_colr_layers(colr_version, colors, color_glyph, glyph_cache):
     # The value for a COLOR_LAYERS_KEY entry per
     # https://github.com/googlefonts/ufo2ft/pull/359
     colr_layers = []
 
-    bounds = None
-
-    def _update_bounds(paint):
-        if not isinstance(paint, PaintGlyph):
-            return
-        glyph = color_glyph.ufo.get(paint.glyph)
-        glyph_bbox = glyph.getControlBounds(color_glyph.ufo)
-        if glyph_bbox is not None:
-            nonlocal bounds
-            if bounds is None:
-                bounds = glyph_bbox
-            else:
-                bounds = unionRect(bounds, glyph_bbox)
-
-    color_glyph.traverse(_update_bounds)
-
     # accumulate layers in z-order
     for paint in color_glyph.painted_layers:
-        colr_layers.append(_colr_layer(colr_version, paint, colors))
+        if colr_version == 0:
+            colr_layers.extend(_colr0_layers(color_glyph, paint, colors))
+        elif colr_version == 1:
+            colr_layers.append(paint.to_ufo_paint(colors))
+        else:
+            raise ValueError(f"Invalid color version {colr_version}")
 
     if colr_version > 0:
         colr_layers = {
@@ -461,12 +492,12 @@ def _ufo_colr_layers_and_bounds(colr_version, colors, color_glyph, glyph_cache):
             "Layers": colr_layers,
         }
 
-    return colr_layers, bounds
+    return colr_layers
 
 
 def _colr_ufo(colr_version, config, ufo, color_glyphs):
     # Sort colors so the index into colors == index into CPAL palette.
-    # We only store opaque colors in CPAL for CORLv1, as 'alpha' is
+    # We only store opaque colors in CPAL for COLRv1, as 'alpha' is
     # encoded separately.
     colors = sorted(
         set(
@@ -499,9 +530,10 @@ def _colr_ufo(colr_version, config, ufo, color_glyphs):
         )
 
         # write out the ufo structures for COLR
-        ufo_color_layers[color_glyph.glyph_name], bounds = _ufo_colr_layers_and_bounds(
+        ufo_color_layers[color_glyph.glyph_name] = _ufo_colr_layers(
             colr_version, colors, color_glyph, glyph_cache
         )
+        bounds = _bounds(color_glyph)
         if bounds is not None:
             colr_glyph = ufo.get(color_glyph.glyph_name)
             _draw_glyph_extents(ufo, colr_glyph, bounds)
@@ -509,8 +541,10 @@ def _colr_ufo(colr_version, config, ufo, color_glyphs):
     ufo.lib[ufo2ft.constants.COLOR_LAYERS_KEY] = ufo_color_layers
 
 
-def _svg_ttfont(_, color_glyphs, ttfont, picosvg=True, compressed=False):
-    make_svg_table(ttfont, color_glyphs, picosvg, compressed)
+def _svg_ttfont(
+    config: FontConfig, _, color_glyphs, ttfont, picosvg=True, compressed=False
+):
+    make_svg_table(config, ttfont, color_glyphs, picosvg, compressed)
 
 
 def _ensure_codepoints_will_have_glyphs(ufo, glyph_inputs):

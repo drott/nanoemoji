@@ -375,8 +375,6 @@ def _painted_layers(
     glyph_width: int,
 ) -> Tuple[Paint, ...]:
 
-    # TODO shape reuse; normalize the shape and optionally introduce a transform+ref
-
     defs_seen = False
     layers = []
 
@@ -486,16 +484,18 @@ class ColorGlyph(NamedTuple):
             base_glyph.unicode = next(iter(codepoints))
 
         # Grab the transform + (color, glyph) layers unless they aren't to be touched
-        painted_layers = None
-        if font_config.has_picosvgs:
-            painted_layers = tuple(
-                _painted_layers(
-                    filename,
-                    font_config,
-                    svg,
-                    base_glyph.width,
+        # or cannot possibly paint
+        painted_layers = ()
+        if not font_config.transform.is_degenerate():
+            if font_config.has_picosvgs:
+                painted_layers = tuple(
+                    _painted_layers(
+                        filename,
+                        font_config,
+                        svg,
+                        base_glyph.width,
+                    )
                 )
-            )
 
         return ColorGlyph(
             ufo,
