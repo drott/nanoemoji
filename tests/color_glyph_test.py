@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from nanoemoji.colors import Color
-from nanoemoji.color_glyph import _decompose_uniform_transform, ColorGlyph, PaintedLayer
+from nanoemoji.color_glyph import _decompose_uniform_transform, ColorGlyph
 from nanoemoji.config import FontConfig
 from nanoemoji.paint import *
 from picosvg.svg import SVG
@@ -463,7 +463,7 @@ def _round_coords(paint, prec=5):
                 PaintComposite(
                     mode=CompositeMode.SRC_IN,
                     source=PaintColrLayers(
-                        layers=[
+                        layers=(
                             PaintGlyph(
                                 glyph="M5,25 L105,25 L105,125 L5,125 Z M15,35 L15,115 L95,115 L95,35 Z",
                                 paint=PaintSolid(
@@ -476,7 +476,7 @@ def _round_coords(paint, prec=5):
                                     color=Color(red=255, green=0, blue=0, alpha=1.0)
                                 ),
                             ),
-                        ],
+                        ),
                     ),
                     backdrop=PaintSolid(color=Color(red=0, green=0, blue=0, alpha=0.6)),
                 ),

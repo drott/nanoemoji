@@ -100,9 +100,12 @@ class Paint:
             yield context
             transform = context.transform
             # TODO paint variants
-            if context.paint.format == PaintTransform.format:
+            if isinstance(context.paint, PaintTransform):
                 transform = Affine2D.compose_ltr(
-                    (transform, Affine2D(*context.paint.transform))
+                    (
+                        transform,
+                        Affine2D(*context.paint.transform),
+                    )
                 )
             for paint in context.paint.children():
                 frontier.append(
@@ -118,11 +121,14 @@ class PaintColrLayers(Paint):
     format: ClassVar[int] = int(ot.PaintFormat.PaintColrLayers)
     layers: Tuple[Paint, ...]
 
+    def colors(self):
+        pass
+
     def to_ufo_paint(self, colors):
         return [p.to_ufo_paint(colors) for p in self.layers]
 
     def children(self):
-        return layers
+        return self.layers
 
 
 @dataclasses.dataclass(frozen=True)

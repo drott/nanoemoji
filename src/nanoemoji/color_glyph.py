@@ -254,16 +254,6 @@ def _common_gradient_parts(el, shape_opacity=1.0):
     }
 
 
-class PaintedLayer(NamedTuple):
-    paint: Paint
-    path: str  # path.d
-    reuses: Tuple[Affine2D, ...] = ()
-
-    def shape_cache_key(self):
-        # a hashable cache key ignoring paint
-        return (self.path, self.reuses)
-
-
 def _paint(
     debug_hint: str, config: FontConfig, picosvg: SVG, shape: SVGPath, glyph_width: int
 ) -> Paint:
@@ -287,7 +277,11 @@ def _paint(
 
 
 def _paint_glyph(
-    config: FontConfig, picosvg: SVG, context: SVGTraverseContext, glyph_width: int
+    debug_hint: str,
+    config: FontConfig,
+    picosvg: SVG,
+    context: SVGTraverseContext,
+    glyph_width: int,
 ) -> Paint:
     shape = context.shape()
 
@@ -304,7 +298,7 @@ def _paint_glyph(
             )
         except ValueError as e:
             raise ValueError(
-                f"parse failed for {debug_hint}, {etree.tostring(el)[:128]}"
+                f"parse failed for {debug_hint}, {etree.tostring(fill_el)[:128]}"
             ) from e
     else:
         glyph_paint = PaintSolid(
@@ -312,25 +306,6 @@ def _paint_glyph(
         )
 
     return PaintGlyph(glyph=shape.as_path().d, paint=glyph_paint)
-
-
-def _in_glyph_reuse_key(
-    debug_hint: str,
-    config: FontConfig,
-    picosvg: SVG,
-    context: SVGTraverseContext,
-    glyph_width: int,
-) -> Tuple[Paint, SVGPath]:
-    """Within a glyph reuse shapes only when painted consistently.
-    paint+normalized shape ensures this."""
-    if context.element_class() == SVGElementClass.SHAPE:
-        shape = context.shape()
-        return (
-            context.element_class(),
-            _paint(debug_hint, config, picosvg, shape, glyph_width),
-            normalize(shape, config.reuse_tolerance),
-        )
-    return (context.element_class(), context.path)  # unique
 
 
 def _intersect(path1: SVGPath, path2: SVGPath) -> bool:
@@ -392,7 +367,9 @@ def _painted_layers(
             continue  # defs are pulled in by the consuming paints
 
         if context.is_shape():
-            nodes.append(_paint_glyph(config, picosvg, context, glyph_width))
+            nodes.append(
+                _paint_glyph(debug_hint, config, picosvg, context, glyph_width)
+            )
 
         if context.is_group():
             # flush the current shapes into a new group
@@ -404,7 +381,7 @@ def _painted_layers(
             ), f"{context.path} only attribute should be opacity. Found {context.element.attrib.keys()}"
             paint = PaintComposite(
                 mode=CompositeMode.SRC_IN,
-                source=PaintColrLayers(nodes),
+                source=PaintColrLayers(tuple(nodes)),
                 backdrop=PaintSolid(Color(0, 0, 0, opacity)),
             )
             nodes = [paint]
@@ -455,7 +432,7 @@ class ColorGlyph(NamedTuple):
     glyph_name: str
     glyph_id: int
     codepoints: Tuple[int, ...]
-    painted_layers: Optional[Tuple[PaintedLayer, ...]]  # None for untouched formats
+    painted_layers: Optional[Tuple[Paint, ...]]  # None for untouched formats
     svg: SVG  # picosvg except for untouched formats
     user_transform: Affine2D
 
@@ -533,13 +510,11 @@ class ColorGlyph(NamedTuple):
     def transform_for_font_space(self):
         return self._transform(map_viewbox_to_font_space)
 
-    def paints(self):
-        """Set of Paint used by this glyph."""
-        return {l.paint for l in self.painted_layers}
-
     def colors(self):
         """Set of Color used by this glyph."""
-        return set(chain.from_iterable([p.colors() for p in self.paints()]))
+        all_colors = set()
+        self.traverse(lambda paint: all_colors.update(paint.colors()))
+        return all_colors
 
     def traverse(self, visitor):
         def _traverse_callback(paint):

@@ -18,7 +18,7 @@ import dataclasses
 from io import BytesIO
 from fontTools import ttLib
 from lxml import etree  # pytype: disable=import-error
-from nanoemoji.color_glyph import ColorGlyph, PaintedLayer
+from nanoemoji.color_glyph import ColorGlyph
 from nanoemoji.config import FontConfig
 from nanoemoji.disjoint_set import DisjointSet
 from nanoemoji.paint import (
@@ -39,7 +39,7 @@ from picosvg import svg_meta
 from picosvg.svg_reuse import normalize, affine_between
 from picosvg.svg_transform import Affine2D
 from picosvg.svg_types import SVGPath
-from typing import MutableMapping, NamedTuple, Optional, Sequence, Tuple, Union
+from typing import cast, MutableMapping, NamedTuple, Optional, Sequence, Tuple, Union
 
 
 # topicosvg()'s default
@@ -93,7 +93,7 @@ def _glyph_groups(
         for root in color_glyph.painted_layers:
             for context in root.breadth_first():
                 # Group glyphs based on common shapes
-                if context.paint.format != PaintGlyph.format:
+                if not isinstance(context.paint, PaintGlyph):
                     continue
                 reuse_key = _inter_glyph_reuse_key(
                     config.reuse_tolerance, color_glyph.svg.view_box(), context.paint
@@ -342,7 +342,9 @@ def _add_glyph(svg: SVG, color_glyph: ColorGlyph, reuse_cache: ReuseCache):
             if context.path:
                 parent_el = context.path[-1]
 
-            if context.paint.format == PaintGlyph.format:
+            if isinstance(context.paint, PaintGlyph):
+                paint_glyph = cast(PaintGlyph, context.paint)
+                glyph_path = paint_glyph.glyph
                 reuse_key = _inter_glyph_reuse_key(
                     reuse_cache.reuse_tolerance, view_box, context.paint
                 )
@@ -350,10 +352,9 @@ def _add_glyph(svg: SVG, color_glyph: ColorGlyph, reuse_cache: ReuseCache):
                 if reuse_key in reuse_cache.shapes:
                     el = reuse_cache.shapes[reuse_key]
                     source_path = el.attrib["d"]
-                    target_path = context.paint.glyph
                     transform = affine_between(
                         SVGPath(d=source_path),
-                        SVGPath(d=target_path),
+                        SVGPath(d=glyph_path),
                         reuse_cache.reuse_tolerance,
                     )
                     if transform:
@@ -387,11 +388,11 @@ def _add_glyph(svg: SVG, color_glyph: ColorGlyph, reuse_cache: ReuseCache):
                         created_use = True
 
                 if not created_use:
-                    el = to_element(SVGPath(d=context.paint.glyph))
+                    el = to_element(SVGPath(d=paint_glyph.glyph))
                     _apply_paint(
-                        svg_defs, el, context.paint.paint, upem_to_vbox, reuse_cache
+                        svg_defs, el, paint_glyph.paint, upem_to_vbox, reuse_cache
                     )
-                    parent_el.append(el)
+                    parent_el.append(el)  # pytype: disable=attribute-error
                     reuse_cache.shapes[reuse_key] = el
 
                 complete_paths.add(context.path + (context.paint,))

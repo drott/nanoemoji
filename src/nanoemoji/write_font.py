@@ -29,7 +29,7 @@ from lxml import etree  # pytype: disable=import-error
 from nanoemoji import codepoints, config
 from nanoemoji.colors import Color
 from nanoemoji.config import FontConfig
-from nanoemoji.color_glyph import ColorGlyph, PaintedLayer
+from nanoemoji.color_glyph import ColorGlyph
 from nanoemoji.glyph import glyph_name
 from nanoemoji.paint import (
     CompositeMode,
@@ -53,11 +53,13 @@ from picosvg.svg_types import SVGPath
 import regex
 import sys
 from typing import (
+    cast,
     Any,
     Callable,
     Generator,
     Iterable,
     Mapping,
+    MutableSequence,
     NamedTuple,
     Optional,
     Sequence,
@@ -84,9 +86,9 @@ class InputGlyph(NamedTuple):
 # If the output file is .ufo then apply_ttfont is not called.
 # Where possible code to the ufo and let apply_ttfont be a nop.
 class ColorGenerator(NamedTuple):
-    apply_ufo: Callable[[ufoLib2.Font, Sequence[ColorGlyph]], None]
+    apply_ufo: Callable[[FontConfig, ufoLib2.Font, MutableSequence[ColorGlyph]], None]
     apply_ttfont: Callable[
-        [FontConfig, ufoLib2.Font, Sequence[ColorGlyph], ttLib.TTFont], None
+        [FontConfig, ufoLib2.Font, MutableSequence[ColorGlyph], ttLib.TTFont], None
     ]
     font_ext: str  # extension for font binary, .ttf or .otf
 
@@ -365,7 +367,7 @@ def _draw_glyph_extents(
 
 
 def _glyf_ufo(
-    config: FontConfig, ufo: ufoLib2.Font, color_glyphs: Sequence[ColorGlyph]
+    config: FontConfig, ufo: ufoLib2.Font, color_glyphs: MutableSequence[ColorGlyph]
 ):
     # glyphs by reuse_key
     glyph_cache = GlyphReuseCache(config)
@@ -387,9 +389,10 @@ def _glyf_ufo(
         for root in color_glyph.painted_layers:
             for context in root.breadth_first():
                 # For 'glyf' just dump anything that isn't a PaintGlyph
-                if context.paint.format != PaintGlyph.format:
+                if not isinstance(context.paint, PaintGlyph):
                     continue
-                glyph = ufo.get(context.paint.glyph)
+                paint_glyph = cast(PaintGlyph, context.paint)
+                glyph = ufo.get(paint_glyph.glyph)
                 parent_glyph.components.append(
                     Component(baseGlyph=glyph.name, transformation=context.transform)
                 )
@@ -438,15 +441,17 @@ def _colr0_layers(color_glyph: ColorGlyph, root: Paint, palette: Sequence[Color]
     ufo = color_glyph.ufo
     layers = []
     for context in root.breadth_first():
-        if context.paint.format != PaintGlyph.format:
+        if context.paint.format != PaintGlyph.format:  # pytype: disable=attribute-error
             continue
-
-        color = next(context.paint.colors())
-        glyph_name = context.paint.glyph
+        paint_glyph: PaintGlyph = (
+            context.paint
+        )  # pytype: disable=annotation-type-mismatch
+        color = next(paint_glyph.colors())
+        glyph_name = paint_glyph.glyph
 
         if context.transform != Affine2D.identity():
             glyph_name = _create_transformed_glyph(
-                color_glyph, context.paint, context.transform
+                color_glyph, paint_glyph, context.transform
             ).name
 
         layers.append((glyph_name, palette.index(color)))
@@ -457,18 +462,20 @@ def _bounds(color_glyph: ColorGlyph):
     bounds = None
     for root in color_glyph.painted_layers:
         for context in root.breadth_first():
-            if context.paint.format == PaintGlyph.format:
-                glyph = color_glyph.ufo.get(context.paint.glyph)
-                glyph_bbox = glyph.getControlBounds(color_glyph.ufo)
-                if glyph_bbox is None:
-                    continue
-                glyph_bbox = tuple(context.transform.map_point(glyph_bbox[:2])) + tuple(
-                    context.transform.map_point(glyph_bbox[2:])
-                )
-                if bounds is None:
-                    bounds = glyph_bbox
-                else:
-                    bounds = unionRect(bounds, glyph_bbox)
+            if not isinstance(context.paint, PaintGlyph):
+                continue
+            paint_glyph: PaintGlyph = cast(PaintGlyph, context.paint)
+            glyph = color_glyph.ufo.get(paint_glyph.glyph)
+            glyph_bbox = glyph.getControlBounds(color_glyph.ufo)
+            if glyph_bbox is None:
+                continue
+            glyph_bbox = tuple(context.transform.map_point(glyph_bbox[:2])) + tuple(
+                context.transform.map_point(glyph_bbox[2:])
+            )
+            if bounds is None:
+                bounds = glyph_bbox
+            else:
+                bounds = unionRect(bounds, glyph_bbox)
     return bounds
 
 
