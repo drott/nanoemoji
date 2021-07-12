@@ -257,16 +257,13 @@ class GlyphReuseCache:
         assert (
             not path in self._known_glyphs
         ), f"{path} isn't a path, it's a glyph name we've seen before"
-        print("try_reuse", path)
         assert path.startswith("M"), f"{path} doesn't look like a path"
 
         if self._config.reuse_tolerance == -1:
-            print("  reuse disabled")
             return None
 
         norm_path = normalize(SVGPath(d=path), self._config.reuse_tolerance).d
         if norm_path not in self._reusable_paths:
-            print(f"  not in reusable {norm_path}")
             return None
 
         glyph_name, glyph_path = self._reusable_paths[norm_path]
@@ -274,9 +271,7 @@ class GlyphReuseCache:
             SVGPath(d=glyph_path), SVGPath(d=path), self._config.reuse_tolerance
         )
         if affine is None:
-            print(f"  affine_between failed {norm_path}")
             return None
-        print(f"  reuse! {norm_path} {affine}")
         return ReuseResult(glyph_name, affine)
 
     def add_glyph(self, glyph_name, glyph_path):
@@ -287,7 +282,6 @@ class GlyphReuseCache:
             norm_path = glyph_path
         self._reusable_paths[norm_path] = (glyph_name, glyph_path)
         self._known_glyphs.add(glyph_name)
-        print("Capture", glyph_name, "=>", norm_path)
 
     def is_known_glyph(self, glyph_name):
         return glyph_name in self._known_glyphs
@@ -340,7 +334,6 @@ def _migrate_paths_to_ufo_glyphs(
         glyph = _create_glyph(color_glyph, paint, path_in_font_space)
         glyph_cache.add_glyph(glyph.name, path_in_font_space)
 
-        print("return", dataclasses.replace(paint, glyph=glyph.name))
         return dataclasses.replace(paint, glyph=glyph.name)
 
     return color_glyph.mutating_traverse(_update_paint_glyph)
@@ -427,7 +420,6 @@ def _create_transformed_glyph(
     color_glyph: ColorGlyph, paint: PaintGlyph, transform: Affine2D
 ) -> Glyph:
     glyph = _init_glyph(color_glyph)
-    print("_create_transformed_glyph", transform)
     glyph.components.append(Component(baseGlyph=paint.glyph, transformation=transform))
     color_glyph.ufo.glyphOrder += [glyph.name]
 
