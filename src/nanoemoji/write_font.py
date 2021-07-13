@@ -18,7 +18,7 @@
 from absl import app
 from absl import flags
 from absl import logging
-from collections import defaultdict
+from collections import Counter
 import csv
 import dataclasses
 from fontTools import ttLib
@@ -252,7 +252,7 @@ class GlyphReuseCache:
 
         Path is expected to be in font units.
 
-        Returns (glyph name, transform) if possible, (input path, identity) if not.
+        Returns (glyph name, transform) if possible, None if not.
         """
         assert (
             not path in self._known_glyphs
@@ -271,6 +271,7 @@ class GlyphReuseCache:
             SVGPath(d=glyph_path), SVGPath(d=path), self._config.reuse_tolerance
         )
         if affine is None:
+            logging.warning("affine_between %s %s failed", glyph_path, path)
             return None
         return ReuseResult(glyph_name, affine)
 
@@ -364,7 +365,7 @@ def _glyf_ufo(
 ):
     # glyphs by reuse_key
     glyph_cache = GlyphReuseCache(config)
-    glyph_uses = defaultdict(int)
+    glyph_uses = Counter()
     for i, color_glyph in enumerate(color_glyphs):
         logging.debug(
             "%s %s %s",

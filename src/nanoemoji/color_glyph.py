@@ -518,7 +518,7 @@ class ColorGlyph(NamedTuple):
 
     def traverse(self, visitor):
         def _traverse_callback(paint):
-            updated_paint = visitor(paint)
+            visitor(paint)
             return paint
 
         for p in self.painted_layers:
