@@ -263,7 +263,7 @@
         </Paint>
         <Glyph value="e000.2"/>
       </Paint>
-      <Paint index="3" Format="12"><!-- PaintTransform -->
+      <Paint index="3" Format="22"><!-- PaintScaleUniformAroundCenter -->
         <Paint Format="10"><!-- PaintGlyph -->
           <Paint Format="2"><!-- PaintSolid -->
             <PaletteIndex value="2"/>
@@ -271,16 +271,11 @@
           </Paint>
           <Glyph value="e000.0"/>
         </Paint>
-        <Transform>
-          <xx value="0.117"/>
-          <yx value="0.0"/>
-          <xy value="0.0"/>
-          <yy value="0.117"/>
-          <dx value="44.167"/>
-          <dy value="44.167"/>
-        </Transform>
+        <scale value="0.117"/>
+        <centerX value="50"/>
+        <centerY value="50"/>
       </Paint>
-      <Paint index="4" Format="12"><!-- PaintTransform -->
+      <Paint index="4" Format="22"><!-- PaintScaleUniformAroundCenter -->
         <Paint Format="10"><!-- PaintGlyph -->
           <Paint Format="2"><!-- PaintSolid -->
             <PaletteIndex value="8"/>
@@ -288,16 +283,11 @@
           </Paint>
           <Glyph value="e000.0"/>
         </Paint>
-        <Transform>
-          <xx value="0.05"/>
-          <yx value="0.0"/>
-          <xy value="0.0"/>
-          <yy value="0.05"/>
-          <dx value="47.5"/>
-          <dy value="47.5"/>
-        </Transform>
+        <scale value="0.05"/>
+        <centerX value="50"/>
+        <centerY value="50"/>
       </Paint>
-      <Paint index="5" Format="12"><!-- PaintTransform -->
+      <Paint index="5" Format="22"><!-- PaintScaleUniformAroundCenter -->
         <Paint Format="10"><!-- PaintGlyph -->
           <Paint Format="2"><!-- PaintSolid -->
             <PaletteIndex value="3"/>
@@ -305,16 +295,11 @@
           </Paint>
           <Glyph value="e000.0"/>
         </Paint>
-        <Transform>
-          <xx value="0.067"/>
-          <yx value="0.0"/>
-          <xy value="0.0"/>
-          <yy value="0.067"/>
-          <dx value="9.081"/>
-          <dy value="46.565"/>
-        </Transform>
+        <scale value="0.067"/>
+        <centerX value="10"/>
+        <centerY value="50"/>
       </Paint>
-      <Paint index="6" Format="12"><!-- PaintTransform -->
+      <Paint index="6" Format="22"><!-- PaintScaleUniformAroundCenter -->
         <Paint Format="10"><!-- PaintGlyph -->
           <Paint Format="2"><!-- PaintSolid -->
             <PaletteIndex value="3"/>
@@ -322,16 +307,11 @@
           </Paint>
           <Glyph value="e000.0"/>
         </Paint>
-        <Transform>
-          <xx value="0.067"/>
-          <yx value="0.0"/>
-          <xy value="0.0"/>
-          <yy value="0.067"/>
-          <dx value="46.581"/>
-          <dy value="84.065"/>
-        </Transform>
+        <scale value="0.067"/>
+        <centerX value="50"/>
+        <centerY value="90"/>
       </Paint>
-      <Paint index="7" Format="12"><!-- PaintTransform -->
+      <Paint index="7" Format="22"><!-- PaintScaleUniformAroundCenter -->
         <Paint Format="10"><!-- PaintGlyph -->
           <Paint Format="2"><!-- PaintSolid -->
             <PaletteIndex value="3"/>
@@ -339,16 +319,11 @@
           </Paint>
           <Glyph value="e000.0"/>
         </Paint>
-        <Transform>
-          <xx value="0.067"/>
-          <yx value="0.0"/>
-          <xy value="0.0"/>
-          <yy value="0.067"/>
-          <dx value="46.581"/>
-          <dy value="9.065"/>
-        </Transform>
+        <scale value="0.067"/>
+        <centerX value="50"/>
+        <centerY value="10"/>
       </Paint>
-      <Paint index="8" Format="12"><!-- PaintTransform -->
+      <Paint index="8" Format="22"><!-- PaintScaleUniformAroundCenter -->
         <Paint Format="10"><!-- PaintGlyph -->
           <Paint Format="2"><!-- PaintSolid -->
             <PaletteIndex value="3"/>
@@ -356,14 +331,9 @@
           </Paint>
           <Glyph value="e000.0"/>
         </Paint>
-        <Transform>
-          <xx value="0.067"/>
-          <yx value="0.0"/>
-          <xy value="0.0"/>
-          <yy value="0.067"/>
-          <dx value="84.081"/>
-          <dy value="46.565"/>
-        </Transform>
+        <scale value="0.067"/>
+        <centerX value="90"/>
+        <centerY value="50"/>
       </Paint>
       <Paint index="9" Format="10"><!-- PaintGlyph -->
         <Paint Format="2"><!-- PaintSolid -->
