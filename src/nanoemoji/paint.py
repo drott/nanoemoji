@@ -19,7 +19,7 @@ Based on https://github.com/googlefonts/colr-gradients-spec/blob/main/colr-gradi
 import dataclasses
 from enum import Enum, IntEnum
 from fontTools.ttLib.tables import otTables as ot
-from math import radians
+from math import acos, asin, atan, degrees, radians
 from nanoemoji.colors import Color
 from picosvg.geometric_types import Point, almost_equal
 from picosvg.svg_transform import Affine2D
@@ -33,6 +33,9 @@ from typing import (
     Sequence,
     Tuple,
 )
+
+
+_ROUND_DEGREES = 4
 
 
 class Extend(Enum):
@@ -608,11 +611,18 @@ def _f2dot14_rotation_safe(*values):
     return all((value / 180.0) >= -2.0 and (value / 180.0) < 2.0 for value in values)
 
 
+
+def _degrees(arcfn, radians):
+    return round(degrees(arcfn(radians)), _ROUND_DEGREES)
+
+
 def transformed(transform: Affine2D, target: Paint) -> Paint:
     if transform == Affine2D.identity():
         return target
 
     sx, b, c, sy, dx, dy = transform
+
+    print(transform)
 
     # Int16 translation?
     if (dx, dy) != (0, 0) and Affine2D.identity().translate(dx, dy) == transform:
@@ -649,6 +659,31 @@ def transformed(transform: Affine2D, target: Paint) -> Paint:
                     return PaintScaleAroundCenter(
                         paint=target, scaleX=sx, scaleY=sy, center=Point(cx, cy)
                     )
+
+    # Skew?
+    if (b, c) != (0, 0) and (sx, sy) == (1, 1):
+        # https://www.w3.org/TR/SVG11/coords.html#RotationDefined
+        xSkewAngle = _degrees(atan, c)
+        ySkewAngle = _degrees(atan, b)
+
+        if (xSkewAngle, ySkewAngle) != (0, 0) and _f2dot14_rotation_safe(xSkewAngle, ySkewAngle):
+            if (dx, dy) == (0, 0):
+                return PaintSkew(paint=target, xSkewAngle=xSkewAngle, ySkewAngle=ySkewAngle)
+            else:
+                pass  # TODO attempt PaintSkewAroundCenter
+
+    # Rotate?
+    if (sx, b, c, sy) != (1, 0, 0, 1) and all(-1 <= v <= 1 for v in (sx, b, c, sy)):
+        # TODO handle dx, dy (around center)
+        angles = {_degrees(acos, sx), _degrees(asin, b), _degrees(lambda v: -asin(v), c), _degrees(acos, sy)}
+        print("angles", angles)
+
+        if len(angles) == 1:
+            angle = next(iter(angles))
+            if (dx, dy) == (0, 0):
+                return PaintRotate(paint=target, angle=angle)
+            else:
+                pass  # TODO attempt PaintRotateAroundCenter
 
     # TODO optimize rotations
 

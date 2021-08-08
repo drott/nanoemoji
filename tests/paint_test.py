@@ -179,6 +179,35 @@ def test_gettransform(input_point, paint, expected_point):
                 center=Point(-80, 160),
             ),
         ),
+        # PaintSkew, x
+        (
+            Affine2D.fromstring("skewx(30)"),
+            PaintGlyph(glyph="A Glyph", paint=PaintSolid()),
+            PaintSkew(
+                paint=PaintGlyph(glyph="A Glyph", paint=PaintSolid()),
+                xSkewAngle=30,
+                ySkewAngle=0,
+            ),
+        ),
+        # PaintSkew, y
+        (
+            Affine2D.fromstring("skewy(30)"),
+            PaintGlyph(glyph="A Glyph", paint=PaintSolid()),
+            PaintSkew(
+                paint=PaintGlyph(glyph="A Glyph", paint=PaintSolid()),
+                xSkewAngle=0,
+                ySkewAngle=30,
+            ),
+        ),
+        # PaintRotate
+        (
+            Affine2D.fromstring("rotate(30)"),
+            PaintGlyph(glyph="A Glyph", paint=PaintSolid()),
+            PaintRotate(
+                paint=PaintGlyph(glyph="A Glyph", paint=PaintSolid()),
+                angle=30,
+            ),
+        ),
     ],
 )
 def test_transformed(transform, target, expected_result):
